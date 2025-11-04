@@ -1,0 +1,184 @@
+---
+title: "Colocalisation results"
+#author: "Ping Zhang"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    code_folding: show
+params:
+  coloc_lmm_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/LMM.analysis/coloc/eQTL/coloc.results.127.datasets_LMM.txt.gz"
+#  coloc_d2_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/coloc/coloc.results.127.datasets_D2.txt.gz"
+#  coloc_d7_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/coloc/coloc.results.127.datasets_D7.txt.gz"
+  TST_genes_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/AllTSTResponseGenes.csv"
+  PP_threshold: 0.9
+  reference_dataset: "GTEx_skin_sun_exposed"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 8)
+```
+```{r load_libraries}
+library(data.table)
+library(ggplot2)
+library(ggrepel)
+library(pheatmap)
+library(RColorBrewer)
+library(viridisLite)
+library(reshape) 
+library(reshape2)
+```
+```{r load_data}
+# Load LMM colocalisation results
+zzzz <- as.data.frame(fread(params$coloc_lmm_path))
+zzzz$pairs <- paste0(zzzz$gene_names, "-", zzzz$risd_TB.top)
+
+cat("Total unique gene-SNP pairs:", length(unique(zzzz$pairs)), "\n")
+cat("Total datasets:", length(unique(zzzz$datasets)), "\n")
+
+# Load TST-responsive genes
+TST <- fread(params$TST_genes_path)
+TST_filtered <- TST[TST$MaxFC >= 0.58, ]
+TST_filtered$gene_symbol <- TST_filtered$HGNC
+cat("TST response genes (FC >=0.58):", nrow(TST_filtered), "\n")
+
+# Add shared and TST annotations
+zzzz$shared <- ifelse(zzzz$PP.H4.abf > params$PP_threshold, "YES", "NO")
+zzzz$TSTs <- ifelse(zzzz$gene_names %in% TST_filtered$gene_symbol, "TRUE", "FALSE")
+
+cat("Breakdown of TST annotations:\n")
+print(table(zzzz$TSTs))
+```
+# Distribution of posterior probabilities
+```{r histogram_max_PP_H4,fig.width=8, fig.height=6}
+# Get unique pairs with maximum PP.H4.abf
+zzzz.shared <- setDT(zzzz)[, .SD[which.max(PP.H4.abf)], by = pairs]
+
+# Create histogram with color coding
+h <- hist(zzzz.shared$PP.H4.abf, breaks = 100, plot = FALSE)
+cuts <- cut(h$breaks, c(-Inf, 0.2, 0.8, Inf))
+
+plot(h, 
+     cex.axis = 0.6, 
+     col = c("darkorange", "grey", "cyan4")[cuts],
+     main = "Distribution of PP.H4.abf\n(Maximum per gene-eQTL pair)",
+     xlab = "PP.H4.abf",
+     ylab = "Frequency")
+legend("topright", 
+       legend = c("PP.H4.abf < 0.2", "0.2 ≤ PP.H4.abf ≤ 0.8", "PP.H4.abf > 0.8"),
+       fill = c("darkorange", "grey", "cyan4"),
+       cex = 0.8)
+```
+
+# Percentage of Shared eQTLs that are TST Genes
+```{r percentage_shared_eQTLs,fig.width=14, fig.height=8}
+
+# Prepare data for plotting
+plot1_data <- do.call(rbind, lapply(unique(zzzz$datasets), function(ds) {
+  subset_data <- zzzz[zzzz$datasets == ds, ]
+  counts <- table(subset_data$TSTs, subset_data$shared)
+  
+  data.frame(
+    datasets = ds,
+    TSTs = rownames(counts),
+    shared = rep(colnames(counts), each = nrow(counts)),
+    n = as.numeric(counts)
+  )
+}))
+
+# Calculate percentages
+total_counts <- aggregate(n ~ datasets, data = plot1_data, sum)
+plot1_data$percent <- mapply(function(ds, n) {
+  n / total_counts$n[total_counts$datasets == ds] * 100
+}, plot1_data$datasets, plot1_data$n)
+
+plot1_data$pct <- round(plot1_data$percent, digits = 1)
+plot1_data$pct.label <- paste0(round(plot1_data$percent, digits = 0), "%")
+
+# Plot only shared eQTLs
+shared_data <- plot1_data[plot1_data$shared == "YES", ]
+
+ggplot(shared_data, aes(x = reorder(datasets, -pct), y = pct, fill = TSTs)) +
+  geom_col() +
+  geom_text(aes(label = pct.label),
+            size = 2,
+            position = position_stack(vjust = 0.5)) +
+  scale_fill_manual(values = c("FALSE" = "grey", "TRUE" = "steelblue")) +
+  labs(x = "",
+       y = "Percentage of shared eQTLs (%)",
+       fill = "TSTs") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 6),
+        axis.title.x = element_text(face = "bold"),
+        axis.title.y = element_text(face = "bold"),
+        plot.title = element_text(hjust = 0.5),
+        legend.title = element_text(face = "bold")) +
+  ggtitle("% of shared eQTLs by TST status")
+
+```
+
+# Fisher's exact test for TST enrichment
+```{r fisher_exact_test_enrichment, fig.width=10, fig.height=5}
+# Perform Fisher's exact test for each dataset vs reference
+enrich <- list()
+datasets <- unique(zzzz$datasets)
+
+for (i in datasets) {
+  dataset_data <- zzzz[zzzz$datasets == i & zzzz$shared == "YES", ]
+  ref_data <- zzzz[zzzz$datasets == params$reference_dataset & zzzz$shared == "YES", ]
+  
+  a <- length(unique(dataset_data[dataset_data$TSTs == "TRUE", ]$gene_names))
+  b <- length(unique(dataset_data[dataset_data$TSTs == "FALSE", ]$gene_names))
+  x <- length(unique(ref_data[ref_data$TSTs == "TRUE", ]$gene_names))
+  y <- length(unique(ref_data[ref_data$TSTs == "FALSE", ]$gene_names))
+  
+  fisher_result <- fisher.test(cbind(c(a, b), c(x, y)))
+  
+  enrich[[i]] <- data.frame(
+    shared.eGenes.in.TSTs = a,
+    shared.eGenes.in.non.TSTs = b,
+    fisher.p = fisher_result$p.value,
+    OR = fisher_result$estimate,
+    dataset = i
+  )
+}
+
+enrich_df <- do.call(rbind, enrich)
+enrich_df$fisher.p <- as.numeric(enrich_df$fisher.p)
+enrich_df$OR <- as.numeric(enrich_df$OR)
+enrich_df$Adjust.pvalue <- p.adjust(enrich_df$fisher.p, method = "BH", n = length(enrich_df$fisher.p))
+
+# Add significance annotation
+enrich_df$sig <- ifelse(enrich_df$Adjust.pvalue < 0.05, "T", "F")
+
+cat("Top 10 most significant enrichments:\n")
+print(head(enrich_df[order(enrich_df$Adjust.pvalue), ], 10))
+
+# Create volcano plot
+ggplot(enrich_df, aes(x = OR, y = -log10(Adjust.pvalue), fill = sig)) +
+  geom_point(size = 3, shape = 21) + 
+  theme_classic() +
+  ylab("-Log10 Adjusted P-value") + 
+  xlab("Odds Ratio") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey50") + 
+  geom_vline(xintercept = 1, linetype = "dashed", color = "grey50") +
+  ggrepel::geom_text_repel(
+    data = enrich_df[head(order(enrich_df$Adjust.pvalue), n = 20), ], 
+    aes(label = dataset), 
+    max.overlaps = 100,
+    point.padding = unit(0.2, "lines"),
+    min.segment.length = 0, 
+    size = 3
+  ) + 
+  theme(legend.position = "none") +
+  scale_fill_manual(values = c("grey", "darkorange")) +
+  ggtitle("TST gene enrichment in shared eQTLs\n(Compared to reference dataset)")
+
+```
+
+```{r session_info}
+sessionInfo()
+```
+
+

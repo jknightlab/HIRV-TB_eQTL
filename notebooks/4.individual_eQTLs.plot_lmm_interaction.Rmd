@@ -1,0 +1,197 @@
+---
+title: "LMM eQTL Analysis: gene -> SNP"
+#author: "Ping Zhang"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    code_folding: show
+params:
+  RNAmatrixLM: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/input_lmm/GE_415.txt.gz"
+  MetaTable: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/input_lmm/meta.data_415.txt"
+  covariatesPCsLM: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/input_lmm/Covariates.PCs_415.txt"
+  snp_values: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/input_lmm/SNP_rsid_ALL.267.TB.txt.gz"
+  snp_info: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/input_lmm/SNP_rsid_ALL.267.TB.txt.gz"
+  snp_id: "5:96252432:G:A"
+  gene_id: "ERAP2"
+  RESULTS_DIR: "./results"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4)
+# create results dir
+dir.create(params$RESULTS_DIR, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Introduction
+This report runs a linear mixed model (using lmerTest) eQTL analysis for a single gene / SNP pair and produces results and plots. Paths and IDs are controlled by the `params` above.
+
+## Load libraries
+
+```{r libraries}
+library(data.table)
+library(tidyverse)
+library(lmerTest)
+library(ggplot2)
+library(openxlsx)
+library(interactions)
+```
+
+## 1. Load input tables
+
+```{r load_inputs}
+opt <- list(
+  RNAmatrixLM = params$RNAmatrixLM,
+  MetaTable = params$MetaTable,
+  covariatesPCsLM = params$covariatesPCsLM,
+  snp_values = params$snp_values,
+  snp.info = params$snp_info,
+  snp_id = params$snp_id,
+  gene_id = params$gene_id
+)
+
+# load genotype data
+snp_values = fread(opt$snp_values)
+snp.info = fread(opt$snp.info)
+
+# RNA matrix
+RNAmatrixLM <- fread(opt$RNAmatrixLM)
+rownames(RNAmatrixLM) = RNAmatrixLM$gene_name
+RNAmatrixLM$gene_name = NULL
+
+# metadata
+MetaTable <- fread(opt$MetaTable)
+donor <- as.factor(MetaTable$Sample_ID)
+
+# covariates (PCs)
+covariatesPCsLM <- fread(opt$covariatesPCsLM)
+coFixedLM <- paste(paste("covariatesPCsLM$", colnames(covariatesPCsLM[,2:47]), sep=""), collapse=" + ")
+
+# filter SNP of interest
+dosagefiltered_DR <- snp_values[snp_values$ID == opt$snp_id,]
+rownames(dosagefiltered_DR) = dosagefiltered_DR$ID
+dosagefiltered_DR$ID = NULL
+
+# transpose genotype to samples
+genotype <- as.data.frame(t(dosagefiltered_DR))
+genotype$genotype.ID = rownames(genotype)
+
+# merge genotype with metadata using genotype ID mapping from metadata
+xxxx <- merge(MetaTable, genotype, by.x = "genotype.ID_corrected", by.y = "genotype.ID")
+rownames(xxxx) = xxxx$RNA.Sequencing_ID
+# genotype2 holds SNP dosage per sample as columns
+genotype2 = as.data.frame(t(xxxx[,-c(1:16)]))
+colnames(genotype2) <- rownames(xxxx)
+
+# reorder genotype columns to match RNA matrix columns
+reorder_idx <- match(colnames(RNAmatrixLM), colnames(genotype2))
+if (any(is.na(reorder_idx))) stop("Some sample IDs in RNA matrix have no matching genotype columns")
+
+genotype2_reorder <- genotype2[,reorder_idx]
+
+cat("Check RNAseq ID match between expression, genotype and covariates:\n")
+cat("exp vs genotype:", all(colnames(RNAmatrixLM) == colnames(genotype2_reorder)), "\n")
+cat("exp vs covariates:", all(colnames(RNAmatrixLM) == covariatesPCsLM$RNA.Sequencing_ID), "\n")
+```
+
+## 2. Run LMM for the gene - SNP pair
+
+```{r run_lmm}
+# extract expression vector and SNP dosage
+if (!params$gene_id %in% rownames(RNAmatrixLM)) stop("gene_id not found in RNAmatrixLM")
+
+gene <- as.numeric(RNAmatrixLM[rownames(RNAmatrixLM) == opt$gene_id,])
+snp <- as.numeric(genotype2_reorder)
+
+cat("Lengths - gene:", length(gene), "snp:", length(snp), "\n")
+
+form1 <- as.formula(paste("gene ~ snp +", coFixedLM, "+ (1|donor)"))
+
+# fit model
+lm1 <- lmer(form1, REML = FALSE)
+
+test <- summary(lm1)
+res <- data.frame(
+  gene_name = opt$gene_id,
+  snp = opt$snp_id,
+  Estimate = as.numeric(test$coefficients["snp", "Estimate"]),
+  se = as.numeric(test$coefficients["snp", "Std. Error"]),
+  t.value = as.numeric(test$coefficients["snp", "t value"]),
+  p = as.numeric(test$coefficients["snp", "Pr(>|t|)"])
+)
+
+out_file <- file.path(params$RESULTS_DIR, paste0("LMM-output-", opt$gene_id, "_", opt$snp_id, ".txt"))
+#write.table(res, out_file, quote = FALSE, row.names = FALSE, sep = "\t")
+cat("Wrote results to:", out_file, "\n")
+res
+```
+
+## 3. Boxplot / violin plot of genotype vs expression (covariate-adjusted)
+
+```{r plotting, fig.width=6, fig.height=4}
+# prepare expression and genotype data.frames
+exp = as.data.frame(t(RNAmatrixLM[rownames(RNAmatrixLM) == opt$gene_id,]))
+exp$id = rownames(exp)
+colnames(exp) = c("exp","id")
+
+geno = as.data.frame(t(genotype2_reorder))
+geno$id = rownames(geno)
+colnames(geno) = c("genotype","id")
+
+# genotype allele labels
+ref_alt = snp.info[snp.info$ID == opt$snp_id, ]
+if (nrow(ref_alt) == 0) stop("snp_id not found in snp.info")
+ref_alt <- tidyr::separate(ref_alt, ID, c("CHR","POS","REF","ALT"), sep=":")
+ref_alt = as.data.frame(ref_alt[, c("REF", "ALT")])
+
+gt_states= c(paste(ref_alt[,1], ref_alt[,1], sep="/"), 
+             paste(ref_alt[,1],ref_alt[,2], sep="/"), 
+             paste(ref_alt[,2], ref_alt[,2], sep="/"))
+
+gt_states = factor(gt_states, levels=gt_states)
+# map dosage [0,1,2] to genotype labels
+geno$gt = gt_states[as.numeric(as.vector(geno$genotype)) + 1]
+
+exp.geno = merge(exp, geno, by="id")
+exp.geno.covar = merge(exp.geno, covariatesPCsLM, by.x="id", by.y="RNA.Sequencing_ID")
+
+MetaTable$donor <- as.factor(MetaTable$Sample_ID)
+meta = MetaTable[,c("RNA.Sequencing_ID","donor")]
+
+plot_df = merge(exp.geno.covar, meta, by.x="id", by.y="RNA.Sequencing_ID")
+
+coFixedLM_simple <- paste(colnames(plot_df[,5:50]), collapse = " + ")
+form1 <- as.formula(paste("exp ~ genotype +", coFixedLM_simple, "+ (1|donor)"))
+fit <- lmer(form1, data = plot_df)
+
+beta = signif(coefficients(summary(fit))["genotype", "Estimate"], digits = 3)
+P = signif(coefficients(summary(fit))["genotype", "Pr(>|t|)"], digits = 3)
+
+# regress out covariates and center
+form2 <- as.formula(paste("exp ~", coFixedLM_simple))
+plot_df$adjusted.expression <- residuals(lm(form2, plot_df)) + mean(plot_df$exp, na.rm = TRUE)
+
+plot2 = plot_df %>% group_by(gt) %>% mutate(length = n())
+plot2$name = paste0(plot2$gt, "\n(n=", plot2$length, ")")
+
+p <- ggplot(plot2, aes(reorder(name,genotype), adjusted.expression)) +
+  ggtitle(paste0(opt$snp_id, "_",opt$gene_id, "\nP = ", P, "; beta = ", beta))+ 
+  ylab("Gene Expression") + xlab("") +
+  geom_violin(trim=FALSE, fill='purple', color="grey",alpha=0.5) +
+  geom_jitter(shape=16, position=position_jitter(0.1), alpha=0.5, size=1)+
+  geom_boxplot(outlier.size=0, fill="white",width=0.4, alpha=0.5) + theme_bw() + 
+  theme(plot.title = element_text(size = 10),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.y = element_blank() ) 
+
+print(p)
+
+# save
+#ggsave(filename = file.path(params$RESULTS_DIR, paste0("LMM-output-",opt$gene_id,'_', opt$snp_id,".pdf")), plot = p, height = 3, width = 3)
+```
+
+## Session Information
+```{r session_info}
+sessionInfo()
+```

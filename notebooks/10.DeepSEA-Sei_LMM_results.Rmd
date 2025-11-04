@@ -1,0 +1,281 @@
+---
+title: "DeepSEA functional annotation results"
+#author: "Ping Zhang"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    code_folding: show
+params:
+  eigenMT_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/LMM.analysis/eigenMT/eigenMT.result_final.txt.gz"
+  TST_genes_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/AllTSTResponseGenes.csv"
+  deepsea_40seq_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/DeepSEA_lmm_resul/raw.output/lmm.eGenes_40_seqclass.tsv"
+  deepsea_features_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/DeepSEA_lmm_resul/raw.output/lmm.eGenes_21,907_freatures.tsv.gz"
+  FC_threshold: 0.58
+  FDR_threshold: 0.05
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r load_libraries}
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+```
+
+# Introduction
+This report analyzes DeepSEA functional annotations for fine-mapped eQTLs (LMM), comparing TST-responsive genes vs non-TST genes.
+
+```{r load_eQTL_data}
+# Load eigenMT results
+cat("Loading eigenMT results...\n")
+eGenes <- fread(params$eigenMT_path)
+eGenes_sig <- eGenes[eGenes$BF.FDR < params$FDR_threshold, ]
+cat("Significant eGenes (FDR <", params$FDR_threshold, "):", nrow(eGenes_sig), "\n")
+cat("Unique genes:", length(unique(eGenes_sig$gene)), "\n")
+cat("Unique SNPs:", length(unique(eGenes_sig$SNP)), "\n")
+
+# Load TST genes
+cat("Loading TST genes...\n")
+TST <- fread(params$TST_genes_path)
+TST_filtered <- TST[TST$MaxFC >= params$FC_threshold, ]
+cat("TST genes (FC >=", params$FC_threshold, "):", nrow(TST_filtered), "\n")
+
+# Split into TST and non-TST eGenes
+eGenes_TST <- eGenes_sig[eGenes_sig$gene %in% TST_filtered$HGNC, ]
+eGenes_nonTST <- eGenes_sig[!eGenes_sig$gene %in% TST_filtered$HGNC, ]
+
+cat("TST eGenes:", nrow(eGenes_TST), "\n")
+cat("Non-TST eGenes:", nrow(eGenes_nonTST), "\n")
+
+# Check for duplicated SNPs
+dup_snps <- eGenes_sig[duplicated(eGenes_sig$SNP), ]
+cat("Duplicated SNPs:", nrow(dup_snps), "\n")
+```
+```{r load_deepsea_data}
+cat("Loading DeepSEA 40 sequence class data...\n")
+if (file.exists(params$deepsea_40seq_path)) {
+  DeepSEA_40 <- fread(params$deepsea_40seq_path)
+  cat("DeepSEA 40 sequence class data dimensions:", dim(DeepSEA_40), "\n")
+  
+  # Merge with TST eGenes
+  DeepSEA_TST <- merge(eGenes_TST, DeepSEA_40, by.x = "SNP", by.y = "id")
+  cat("Merged TST eGenes with DeepSEA:", nrow(DeepSEA_TST), "\n")
+  
+  # Get sequence class columns (assuming they start at column 18)
+  seq_cols <- colnames(DeepSEA_TST)[18:57]
+  cat("Number of sequence classes:", length(seq_cols), "\n")
+  cat("First few sequence classes:", head(seq_cols), "\n")
+} else {
+  stop("DeepSEA 40 sequence class file not found: ", params$deepsea_40seq_path)
+}
+```
+
+# Correlation Analysis for 40 Sequence Classes
+```{r correlation_40seq,fig.width = 8, fig.height = 5}
+# Perform correlation analysis for each sequence class
+cat("Performing correlation analysis for 40 sequence classes...\n")
+
+cor_test_estimate <- as.data.frame(sapply(DeepSEA_TST[, seq_cols, with = FALSE], function(x) {
+  cor.test(x, y = DeepSEA_TST$beta, method = "spearman")$estimate
+}))
+
+cor_test_p <- as.data.frame(sapply(DeepSEA_TST[, seq_cols, with = FALSE], function(x) {
+  cor.test(x, y = DeepSEA_TST$beta, method = "spearman")$p.value
+}))
+
+cor_results <- cbind(cor_test_estimate, cor_test_p)
+colnames(cor_results) <- c("spearman.r", "p.value")
+cor_results$class <- gsub(".rho", "", rownames(cor_results))
+cor_results$fdr <- p.adjust(cor_results$p.value, method = "fdr", n = length(cor_results$p.value))
+
+# Add significance annotation
+cor_results$sig <- ifelse(cor_results$fdr < 0.05, "sig", "no")
+cat("Significant correlations (FDR < 0.05):", sum(cor_results$fdr < 0.05), "\n")
+
+# Plot correlation results
+cat("Plotting correlation results...\n")
+ggplot(cor_results, aes(x = spearman.r, y = -log10(fdr), fill = sig)) +
+  scale_fill_manual(values = c("grey", "deepskyblue3")) +
+  geom_point(size = 3, shape = 21, colour = "grey4") + 
+  theme_classic() +
+  ylab("-Log10 Adjusted P-value") + 
+  xlab("Spearman Correlation Coefficient") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey50") + 
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  ggrepel::geom_text_repel(
+    data = cor_results[cor_results$fdr < 0.05, ], 
+    aes(label = class), 
+    max.overlaps = 100,
+    point.padding = unit(0.2, "lines"),
+    min.segment.length = 0,
+    size = 3
+  ) + 
+  theme(legend.position = "none") +
+  ggtitle("DeepSEA 40 Sequence Class Correlation with eQTL Effect Sizes\n(TST Genes)")
+```
+
+# Correlation Analysis for DeepSEA 21,907 features
+```{r correlation_21907features}
+cat("Loading DeepSEA 21,907 features data...\n")
+if (file.exists(params$deepsea_features_path)) {
+  DeepSEA_features <- fread(params$deepsea_features_path)
+  cat("DeepSEA features data dimensions:", dim(DeepSEA_features), "\n")
+  
+  # Merge with non-TST eGenes
+  DeepSEA_TST <- merge(eGenes_TST, DeepSEA_features, by.x = "SNP", by.y = "id")
+  cat("Merged non-TST eGenes with DeepSEA features:", nrow(DeepSEA_TST), "\n")
+  
+  # Assuming features start at column 19 onwards
+  feature_cols <- colnames(DeepSEA_TST)[19:ncol(DeepSEA_TST)]
+  cat("Number of features:", length(feature_cols), "\n")
+} else {
+  stop("DeepSEA features file not found: ", params$deepsea_features_path)
+}
+
+
+cat("Performing correlation analysis for features (this may take a while)...\n")
+
+# For large feature sets, we might want to sample or process in chunks
+# Here we'll process all features but be aware it might be computationally intensive
+
+cor_test_estimate_features <- as.data.frame(sapply(DeepSEA_TST[, feature_cols, with = FALSE], function(x) {
+  cor.test(x, y = DeepSEA_TST$beta, method = "spearman")$estimate
+}))
+
+cor_test_p_features <- as.data.frame(sapply(DeepSEA_TST[, feature_cols, with = FALSE], function(x) {
+  cor.test(x, y = DeepSEA_TST$beta, method = "spearman")$p.value
+}))
+
+cor_features <- cbind(cor_test_estimate_features, cor_test_p_features)
+colnames(cor_features) <- c("spearman.r", "p.value")
+cor_features$class <- gsub(".rho", "", rownames(cor_features))
+
+# Parse class information
+cor_features <- cor_features %>%
+  tidyr::separate(class, c("Cell.type", "chromatin.type", "dataset.id"), sep = "[|]", remove = FALSE)
+
+cor_features$fdr <- p.adjust(cor_features$p.value, method = "fdr", n = length(cor_features$p.value))
+
+cat("Significant feature correlations (FDR < 0.05):", sum(cor_features$fdr < 0.05), "\n")
+```
+
+# Volcano Plot for Top Features
+```{r volcano_plot_features,fig.width = 8, fig.height = 5}
+# Select top feature per chromatin type and cell type
+cor_features$id <- paste0(cor_features$chromatin.type, "-", cor_features$Cell.type)
+cor_features_top <- setDT(cor_features)[, .SD[which.min(p.value)], by = id]
+
+# Add significance annotation
+cor_features_top$sig <- ifelse(cor_features_top$fdr < 0.05, "yes", "no")
+
+cat("Top features after grouping:", nrow(cor_features_top), "\n")
+cat("Significant top features:", sum(cor_features_top$fdr < 0.05), "\n")
+
+# Filter top 10 positive and negative by spearman.r
+top_pos <- cor_features_top %>%
+  filter(fdr < 0.05) %>%
+  arrange(desc(spearman.r)) %>%
+  slice_head(n = 10)
+
+top_neg <- cor_features_top %>%
+  filter(fdr < 0.05) %>%
+  arrange(spearman.r) %>%
+  slice_head(n = 10)
+
+# Plot volcano plot
+cat("Plotting volcano plot for top features...\n")
+ggplot(cor_features_top, aes(x = spearman.r, y = -log10(fdr), fill = sig)) +
+  scale_fill_manual(values = c("grey", "deepskyblue3")) +
+  geom_point(size = 2, shape = 21, colour = "grey4") +
+  theme_classic() +
+  ylab("-Log10 Adjusted P-value") +
+  xlab("Spearman Correlation Coefficient") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  coord_cartesian(xlim = c(-0.2, 0.2)) +
+  
+  # Label top 10 positive (right)
+  geom_text_repel(
+    data = top_pos,
+    aes(label = id),
+    hjust = 1,
+    direction = "y",
+    nudge_x = 0.2,
+    point.padding = 0,
+    size = 2
+  ) +
+  # Label top 10 negative (left)
+  geom_text_repel(
+    data = top_neg,
+    aes(label = id),
+    hjust = 0,
+    direction = "y",
+    nudge_x = -0.2,
+    point.padding = 0,
+    size = 2
+  ) +
+  theme(legend.position = "none") +
+  ggtitle("DeepSEA Feature Correlation with eQTL Effect Sizes\n(TST Genes, Top per Cell Type + Chromatin Type)")
+```
+
+# Comparison of average predicted effects
+```{r average_effects_comparison, fig.width = 8, fig.height = 5}
+cat("Comparing average predicted effects between TST and non-TST eQTLs...\n")
+
+# Add TST annotation to DeepSEA data
+DeepSEA_40$TSTs <- ifelse(DeepSEA_40$id %in% eGenes_TST$SNP, "TST", "non-TST")
+cat("TST SNPs in DeepSEA data:", sum(DeepSEA_40$TSTs == "TST"), "\n")
+cat("Non-TST SNPs in DeepSEA data:", sum(DeepSEA_40$TSTs == "non-TST"), "\n")
+
+# Calculate average scores per group
+plot_data <- DeepSEA_40
+chromatin_cols <- colnames(plot_data)[which(colnames(plot_data) == "PC1 Polycomb / Heterochromatin"):which(colnames(plot_data) == "HET6 Centromere")]
+
+avg_df <- plot_data %>%
+  group_by(TSTs) %>%
+  summarise(across(all_of(chromatin_cols), mean, na.rm = TRUE)) %>%
+  pivot_longer(-TSTs, names_to = "Chromatin_State", values_to = "Average_Score")
+
+# Reorder factor levels
+avg_df$TSTs <- factor(avg_df$TSTs, levels = c("TST", "non-TST"))
+
+cat("Average scores calculated for", length(unique(avg_df$Chromatin_State)), "chromatin states\n")
+
+
+# Plot average scores comparison
+ggplot(avg_df, aes(x = Chromatin_State, y = Average_Score, colour = TSTs)) +
+  geom_point(size = 3) + 
+  scale_color_manual(values = c("TST" = "darkorange", "non-TST" = "cyan4")) +
+  facet_grid(TSTs ~ .) +
+  labs(
+    x = "Sequence Class",
+    y = "Average Predicted Effect"
+  ) + 
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 8),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    legend.position = "none",
+    strip.background = element_blank(),
+    strip.text = element_text(size = 10, face = "bold")
+  ) +
+  ggtitle("Average DeepSEA Predicted Effects by Sequence Class\nTST vs Non-TST eQTLs")
+```
+
+```{r session_info}
+sessionInfo()
+```
+
+
+
+
+
+
+

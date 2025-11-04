@@ -1,0 +1,343 @@
+---
+title: "Venn diagrams & Pathway enrichment for eGenes"
+#author: "Ping Zhang"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    code_folding: show
+params:
+  latent_d2_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/fastQTL_permut/permute_full_d2.txt.gz"
+  latent_d7_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/fastQTL_permut/permute_full_d7.txt.gz"
+  active_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/fastQTL_permut/permute_full_active.txt.gz"
+  eigenMT_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/LMM.analysis/eigenMT/eigenMT.result_final.txt.gz"
+  TST_genes_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/AllTSTResponseGenes.csv"
+  fdr_threshold: 0.05
+  TST_FC_threshold: 0.58
+  pathway_ontology: "MsigdbC2REACTOME"
+  top_pathways_n: 10
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 8)
+```
+```{r libraries}
+library(VennDiagram)
+library(RColorBrewer)
+library(data.table)
+library(eulerr)
+library(XGR)
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(grid)
+```
+
+## Introduction
+This report performs comparative analysis of eQTL results across different conditions (Latent_D2, Active, Latent_D7) including:
+
+    Venn diagrams of overlapping eGenes
+    Pathway enrichment analysis for TST-responsive genes
+    Visualisation of enriched pathways
+
+## Load Data
+```{r load_data}
+# Function to load and process eQTL results
+load_eQTL_data <- function(file_path, condition_name) {
+  cat("Loading", condition_name, "data...\n")
+  data <- fread(file_path)
+  colnames(data) <- c('gene_name', 'num_var', 'beta_shape1', 'beta_shape2', 'Dummy', 
+                      'variant_id', 'tss_distance', 'pval_nominal', 'slope', 'pval_perm', 'pval_beta')
+  data$p_fdr <- p.adjust(data$pval_beta, method = "fdr")
+  cat(condition_name, "- Total genes:", length(unique(data$gene_name)), "\n")
+  
+  sig_data <- data[!is.na(data$p_fdr) & data$p_fdr <= params$fdr_threshold, ]
+  cat(condition_name, "- Significant eGenes (FDR <", params$fdr_threshold, "):", length(unique(sig_data$gene_name)), "\n\n")
+  
+  return(list(full = data, sig = sig_data))
+}
+
+# Load all datasets
+Latent_D2 <- load_eQTL_data(params$latent_d2_path, "Latent_D2")
+Active <- load_eQTL_data(params$active_path, "Active") 
+Latent_D7 <- load_eQTL_data(params$latent_d7_path, "Latent_D7")
+
+# Load eigenMT results
+eigenMT <- fread(params$eigenMT_path)
+eigenMT_sig <- eigenMT[eigenMT$qval <= params$fdr_threshold, ]
+cat("eigenMT - Significant genes (FDR <", params$fdr_threshold, "):", length(unique(eigenMT_sig$gene)), "\n\n")
+```
+## Venn diagram of significant eGenes
+```{r venn_diagram, fig.height=4, fig.width=4}
+X_three_way <- list(
+  Latent_D2 = Latent_D2$sig$gene_name,
+  Active = Active$sig$gene_name, 
+  Latent_D7 = Latent_D7$sig$gene_name
+)
+
+# Create Venn diagram
+v1 <- venn.diagram(
+  X_three_way, 
+  filename = NULL,
+  fill = c('orange', "cyan3", "purple"),
+  col = "transparent",
+  print.mode = "raw"
+)
+
+grid.draw(v1)
+
+# Calculate overlaps
+overlaps_three_way <- calculate.overlap(X_three_way)
+cat("Overlap details:\n")
+print(lapply(overlaps_three_way, length))
+```
+# Euler diagram for better visualisation
+```{r euler_diagram, fig.height=4, fig.width=4}
+# Note: You'll need to update these counts based on your actual overlap results
+fit_three_way <- euler(c(
+  "Latent_D2" = length(overlaps_three_way$a1),
+  "Active" = length(overlaps_three_way$a3),
+  "Latent_D7" = length(overlaps_three_way$a7),
+  "Latent_D2&Active" = length(overlaps_three_way$a2),
+  "Latent_D2&Latent_D7" = length(overlaps_three_way$a4),
+  "Active&Latent_D7" = length(overlaps_three_way$a6),
+  "Latent_D2&Active&Latent_D7" = length(overlaps_three_way$a5)
+))
+
+plot(fit_three_way, 
+     quantities = TRUE,
+     labels = c("Latent_D2", "Active", "Latent_D7"),
+     fill = c("#FFF1D7", "cyan", "purple"))
+```
+
+# Comparison with LMM (eigenMT) results
+```{r venn_lmm_combined, fig.height=5, fig.width=10}
+X_lmm <- list(
+  Latent_D2 = Latent_D2$sig$gene_name,
+  LMM = eigenMT_sig$gene,
+  Latent_D7 = Latent_D7$sig$gene_name
+)
+
+# Calculate overlaps for Euler diagram
+overlaps_lmm <- calculate.overlap(X_lmm)
+
+# Create Venn diagram
+v2 <- venn.diagram(
+  X_lmm,
+  filename = NULL,
+  fill = c('orange', "red", "purple"),
+  col = "transparent", 
+  print.mode = "raw"
+)
+
+# Create Euler diagram using the same pattern as your three_way example
+fit_lmm <- euler(c(
+  "Latent_D2" = length(overlaps_lmm$a1),
+  "LMM" = length(overlaps_lmm$a3), 
+  "Latent_D7" = length(overlaps_lmm$a7),
+  "Latent_D2&LMM" = length(overlaps_lmm$a2),
+  "Latent_D2&Latent_D7" = length(overlaps_lmm$a4),
+  "LMM&Latent_D7" = length(overlaps_lmm$a6),
+  "Latent_D2&LMM&Latent_D7" = length(overlaps_lmm$a5)
+))
+
+# Create the plots side by side
+grid.arrange(
+  # Left: Venn diagram
+  grobTree(v2),
+  
+  # Right: Euler diagram  
+  {
+    plot(fit_lmm, 
+         quantities = TRUE,
+         labels = c("Latent_D2", "LMM", "Latent_D7"),
+         fill = c("orange", "red", "purple"))
+  },
+  
+  ncol = 2,
+  top = textGrob("eGene Overlap: Latent_D2 vs LMM vs Latent_D7", 
+                 gp = gpar(fontsize = 16, fontface = "bold"))
+)
+```
+
+# Pathway enrichment analysis for TST-responsive genes
+```{r pathway_enrichment}
+# Load TST-responsive genes
+TST <- fread(params$TST_genes_path)
+TST_filtered <- TST[TST$MaxFC >= params$TST_FC_threshold, ]
+TST_filtered$gene_symbol <- TST_filtered$HGNC
+
+cat("TST response genes (FC >=", params$TST_FC_threshold, "):", nrow(TST_filtered), "\n")
+
+# Filter significant eGenes that are also TST-responsive
+Latent_D2_sig_TST <- Latent_D2$sig[gene_name %in% TST_filtered$gene_symbol]
+Latent_D7_sig_TST <- Latent_D7$sig[gene_name %in% TST_filtered$gene_symbol]  
+Active_sig_TST <- Active$sig[gene_name %in% TST_filtered$gene_symbol]
+
+cat("TST-responsive significant eGenes:\n")
+cat("  Latent_D2:", nrow(Latent_D2_sig_TST), "\n")
+cat("  Active:", nrow(Active_sig_TST), "\n")
+cat("  Latent_D7:", nrow(Latent_D7_sig_TST), "\n")
+
+# Setup XGR
+RData.location <- "http://galahad.well.ox.ac.uk/bigdata"
+org.Hs.eg <- xRDataLoader(RData = 'org.Hs.eg', RData.location = RData.location)
+
+# day2
+background_d2 <- as.character(unique(Latent_D2$full$gene_name))
+
+data1_eTerm <- xEnricherGenes(
+  data = Latent_D2_sig_TST$gene_name,
+  ontology = params$pathway_ontology,
+  RData.location = RData.location,
+  min.overlap = 0,
+  background = background_d2
+)
+
+res1 <- xEnrichViewer(data1_eTerm, top_num = length(data1_eTerm$adjp), details = TRUE)
+res1$name <- "Latent_D2"
+res1$log10FDR <- -log10(res1$adjp)
+res1$Pathway <- rownames(res1)
+
+topPathways1 <- res1[res1$adjp < 0.05, ]
+topPathways1$contrast <- "Latent_D2"
+topPathways1 <- topPathways1[head(order(topPathways1$adjp), n = params$top_pathways_n), ]
+
+cat("Latent_D2 - Top", nrow(topPathways1), "enriched pathways (FDR < 0.05)\n")
+
+# day7
+
+background_d7 <- as.character(unique(Latent_D7$full$gene_name))
+
+data2_eTerm <- xEnricherGenes(
+  data = Latent_D7_sig_TST$gene_name,
+  ontology = params$pathway_ontology,
+  RData.location = RData.location,
+  min.overlap = 0,
+  background = background_d7
+)
+
+res2 <- xEnrichViewer(data2_eTerm, top_num = length(data2_eTerm$adjp), details = TRUE)
+res2$name <- "Latent_D7"
+res2$log10FDR <- -log10(res2$adjp)
+res2$Pathway <- rownames(res2)
+
+topPathways2 <- res2[res2$adjp < 0.05, ]
+topPathways2$contrast <- "Latent_D7"
+topPathways2 <- topPathways2[head(order(topPathways2$adjp), n = params$top_pathways_n), ]
+
+cat("Latent_D7 - Top", nrow(topPathways2), "enriched pathways (FDR < 0.05)\n")
+
+# active
+background_active <- as.character(unique(Active$full$gene_name))
+
+data3_eTerm <- xEnricherGenes(
+  data = Active_sig_TST$gene_name,
+  ontology = params$pathway_ontology,
+  RData.location = RData.location,
+  min.overlap = 0,
+  background = background_active
+)
+
+res3 <- xEnrichViewer(data3_eTerm, top_num = length(data3_eTerm$adjp), details = TRUE)
+res3$name <- "Active"
+res3$log10FDR <- -log10(res3$adjp)
+res3$Pathway <- rownames(res3)
+
+topPathways3 <- res3[res3$adjp < 0.05, ]
+topPathways3$contrast <- "Active"
+topPathways3 <- topPathways3[head(order(topPathways3$adjp), n = params$top_pathways_n), ]
+
+cat("Active - Top", nrow(topPathways3), "enriched pathways (FDR < 0.05)\n")
+
+
+# Combine top pathways and all results
+TOPpathway <- rbind(topPathways1, topPathways2, topPathways3)
+allRes <- rbind(res1, res2, res3)
+
+# Filter all results to include only top pathways
+TOPpathway_all <- allRes[allRes$Pathway %in% TOPpathway$Pathway, ]
+
+cat("Total unique pathways in analysis:", length(unique(TOPpathway_all$Pathway)), "\n")
+cat("Breakdown by condition:\n")
+print(table(TOPpathway_all$name))
+
+# Clean pathway names
+TOPpathway_all$Pathway <- sub(".*?[_]", "", TOPpathway_all$Pathway)
+```
+
+# Pathway visualisation
+```{r pathway_visualisation}
+# Prepare data for plotting
+TOPpathway_all$log2OR <- log2(TOPpathway_all$or + 1)
+TOPpathway_all$log2CIl <- log2(TOPpathway_all$CIl + 1)
+TOPpathway_all$log2CIu <- log2(TOPpathway_all$CIu + 1)
+TOPpathway_all$log2CIu <- ifelse(TOPpathway_all$nOverlap == "0", 0, TOPpathway_all$log2CIu)
+
+TOPpathway_all$name <- factor(TOPpathway_all$name, levels = c("Latent_D2", "Latent_D7", "Active"))
+TOPpathway_all$sig <- ifelse(TOPpathway_all$adjp < 0.05, "#", ifelse(TOPpathway_all$pvalue < 0.05, "*", ""))
+
+# Create the plot
+unique(TOPpathway_all$Pathway) 
+
+TOPpathway_all$Pathway = factor(TOPpathway_all$Pathway, 
+                                levels = c( "IMMUNE_SYSTEM", 
+                                            "ADAPTIVE_IMMUNE_SYSTEM", 
+                                            "INTERFERON_GAMMA_SIGNALING",
+                                            "INTERFERON_SIGNALING" ,
+                                            "MHC_CLASS_II_ANTIGEN_PRESENTATION" , 
+                                            "CYTOKINE_SIGNALING_IN_IMMUNE_SYSTEM",####
+                                            "ANTIGEN_PRESENTATION_FOLDING_ASSEMBLY_AND_PEPTIDE_LOADING_OF_CLASS_I_MHC",
+                                            "ANTIGEN_PROCESSING_CROSS_PRESENTATION" ,
+                                            "ER_PHAGOSOME_PATHWAY",
+                                            "IMMUNOREGULATORY_INTERACTIONS_BETWEEN_A_LYMPHOID_AND_A_NON_LYMPHOID_CELL",
+                                            "INTERFERON_ALPHA_BETA_SIGNALING",
+                                            "METABOLISM_OF_AMINO_ACIDS_AND_DERIVATIVES",####
+                                            "COSTIMULATION_BY_THE_CD28_FAMILY",
+                                            "DOWNSTREAM_TCR_SIGNALING",
+                                            "GENERATION_OF_SECOND_MESSENGER_MOLECULES",
+                                            "PD1_SIGNALING",
+                                            "PHOSPHORYLATION_OF_CD3_AND_TCR_ZETA_CHAINS",
+                                            "TCR_SIGNALING",
+                                            "TRANSLOCATION_OF_ZAP_70_TO_IMMUNOLOGICAL_SYNAPSE"))
+
+ggplot(data = TOPpathway_all, aes(x = Pathway, y = log2OR, ymin = log2CIl, ymax = log2CIu)) +
+  geom_pointrange(aes(color = name), position = position_dodge(width = 0.8), size = 0.5, alpha = 0.8) + 
+  geom_hline(yintercept = log2(2), lty = 2, color = "gray50") +
+  xlab("Pathway") + 
+  ylab("Log2 odds ratio (95% CI)") + 
+  theme_classic() +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    legend.position = "bottom"
+  ) +
+  scale_color_manual(
+    name = "Condition",
+    values = c("Latent_D2" = "orange", "Latent_D7" = "purple", "Active" = "cyan3")
+  ) +
+  geom_text(
+    aes(label = sig, group = name, y = log2CIu + 0.1), 
+    position = position_dodge(width = 0.8), 
+    size = 3, 
+    hjust = 0.5
+  ) +
+  geom_vline(
+    xintercept = seq(0.5, length(unique(TOPpathway_all$Pathway)), by = 1), 
+    color = "gray", 
+    linewidth = 0.3
+  ) 
+```
+
+```{r session_info}
+sessionInfo()
+```
+
+
+
+
+
+
+

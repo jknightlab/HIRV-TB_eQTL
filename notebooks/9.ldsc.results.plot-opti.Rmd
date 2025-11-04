@@ -1,0 +1,256 @@
+---
+title: "LDSC enrichment analysis - TST vs non-TST eQTLs"
+#author: "Ping Zhang"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    code_folding: show
+params:
+  ldsc_results_dir: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/GWAS.and.coloc/ldsc_TB-updated/binary.results_eGene.threshold.eQTLs/"
+  output_plot: "s-ldsc_enrichment.pdf"
+  enrichment_fdr_threshold: 0.05
+  nominal_p_threshold: 0.05
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 6)
+```
+
+```{r load_libraries}
+library(data.table)
+library(ggplot2)
+```
+
+# Introduction
+This report analyzes LD Score Regression (LDSC) results to compare heritability enrichment between TST-responsive and non-TST eGenes across multiple traits/phenotypes.
+
+# Define a function to process data
+```{r functions}
+process_ldsc_result <- function(file_path, phenotype) {
+  if (!file.exists(file_path)) {
+    warning("File not found: ", file_path)
+    return(NULL)
+  }
+  
+  res <- fread(file_path)
+  
+  # Calculate FDR for enrichment p-values
+  res$FDR_enrichment <- p.adjust(res$Enrichment_p, method = "fdr")
+  
+  # Calculate p-value for coefficient z-score (two-tailed)
+  res$Coefficient_p <- ifelse(
+    res$`Coefficient_z-score` < 0,
+    2 * pnorm(res$`Coefficient_z-score`, lower.tail = TRUE),
+    2 * pnorm(res$`Coefficient_z-score`, lower.tail = FALSE)
+  )
+  res$FDR_Coefficient <- p.adjust(res$Coefficient_p, method = "fdr")
+  
+  res$phenotype <- phenotype
+  return(res)
+}
+```
+
+# Load and process LDSC results
+```{r load_data}
+# Define file names and phenotypes
+file_names <- c(
+  "PASS_Alzheimer_baselineLD.TST.non.TST.results",
+  "PASS_Anorexia_baselineLD.TST.non.TST.results", 
+  "PASS_Autism_baselineLD.TST.non.TST.results",
+  "PASS_BMI1_baselineLD.TST.non.TST.results",
+  "PASS_Bipolar_Disorder_baselineLD.TST.non.TST.results",
+  "PASS_Celiac_baselineLD.TST.non.TST.results",
+  "PASS_Coronary_Artery_Disease_baselineLD.TST.non.TST.results",
+  "PASS_Crohns_Disease_baselineLD.TST.non.TST.results",
+  "PASS_DS_baselineLD.TST.non.TST.results",
+  "PASS_Ever_Smoked_baselineLD.TST.non.TST.results",
+  "PASS_Fasting_Glucose_baselineLD.TST.non.TST.results",
+  "PASS_HDL_baselineLD.TST.non.TST.results",
+  "PASS_Height1_baselineLD.TST.non.TST.results",
+  "PASS_IBD_baselineLD.TST.non.TST.results",
+  "PASS_LDL_baselineLD.TST.non.TST.results",
+  "PASS_Lupus_baselineLD.TST.non.TST.results",
+  "PASS_Multiple_sclerosis_baselineLD.TST.non.TST.results",
+  "PASS_Neuroticism_baselineLD.TST.non.TST.results",
+  "PASS_Primary_biliary_cirrhosis_baselineLD.TST.non.TST.results",
+  "PASS_Rheumatoid_Arthritis_baselineLD.TST.non.TST.results",
+  "PASS_SWB_baselineLD.TST.non.TST.results",
+  "PASS_Schizophrenia_baselineLD.TST.non.TST.results",
+  "PASS_Triglycerides_baselineLD.TST.non.TST.results",
+  "PASS_Type_1_Diabetes_baselineLD.TST.non.TST.results",
+  "PASS_Type_2_Diabetes_baselineLD.TST.non.TST.results",
+  "PASS_Ulcerative_Colitis_baselineLD.TST.non.TST.results",
+  "PASS_Years_of_Education1_baselineLD.TST.non.TST.results",
+  "PASS_Years_of_Education2_baselineLD.TST.non.TST.results"
+)
+
+# Define phenotype names
+phenotype_names <- c(
+  "Alzheimer",
+  "Anorexia", 
+  "Autism",
+  "BMI",
+  "Bipolar_Disorder",
+  "Celiac",
+  "Coronary_Artery_Disease",
+  "Crohns_Disease",
+  "Depressive_symptoms",
+  "Ever_Smoked",
+  "Fasting_Glucose",
+  "HDL",
+  "Height",
+  "IBD",
+  "LDL",
+  "Lupus",
+  "Multiple_sclerosis",
+  "Neuroticism",
+  "Primary_biliary_cirrhosis",
+  "Rheumatoid_Arthritis",
+  "Subject_well_being",
+  "Schizophrenia",
+  "Triglycerides",
+  "Type_1_Diabetes",
+  "Type_2_Diabetes",
+  "Ulcerative_Colitis",
+  "Years_of_Education",
+  "Years_of_Education2"
+)
+
+# Create full file paths by combining directory and file names
+file_paths_full <- file.path(params$ldsc_results_dir, file_names)
+names(file_paths_full) <- phenotype_names
+
+cat("LDSC results directory:", params$ldsc_results_dir, "\n")
+cat("Number of files to process:", length(file_paths_full), "\n")
+
+# Check which files exist
+existing_files <- file.exists(file_paths_full)
+cat("Files found:", sum(existing_files), "/", length(file_paths_full), "\n")
+
+if (sum(existing_files) == 0) {
+  stop("No LDSC result files found. Please check the directory path: ", params$ldsc_results_dir)
+}
+
+# Show missing files
+if (sum(!existing_files) > 0) {
+  cat("Missing files:\n")
+  missing_indices <- which(!existing_files)
+  for (i in missing_indices) {
+    cat("  -", file_names[i], "\n")
+  }
+}
+
+# Process only existing files
+file_paths_to_process <- file_paths_full[existing_files]
+phenotypes_to_process <- phenotype_names[existing_files]
+
+cat("\nProcessing", length(file_paths_to_process), "files...\n")
+
+# Process each file and combine results
+suppl.table_list <- list()
+for (i in seq_along(file_paths_to_process)) {
+  file_path <- file_paths_to_process[i]
+  phenotype <- phenotypes_to_process[i]
+  result <- process_ldsc_result(file_path, phenotype)
+  if (!is.null(result)) {
+    suppl.table_list[[length(suppl.table_list) + 1]] <- result
+  }
+}
+
+if (length(suppl.table_list) > 0) {
+  suppl.table <- rbindlist(suppl.table_list, fill = TRUE)
+  cat("Successfully processed", length(unique(suppl.table$phenotype)), "phenotypes\n")
+} else {
+  stop("No LDSC result files were successfully processed.")
+}
+
+# Data validation
+cat("\nData validation:\n")
+cat("Columns in suppl.table:", paste(colnames(suppl.table), collapse = ", "), "\n")
+cat("Unique categories:", paste(unique(suppl.table$Category), collapse = ", "), "\n")
+
+# Filter for TST and non-TST categories
+plot_data <- suppl.table[suppl.table$Category %in% c("L2_1", "L2_2"), ]
+cat("Rows after filtering L2_1 and L2_2:", nrow(plot_data), "\n")
+
+if (nrow(plot_data) == 0) {
+  # If L2_1 and L2_2 don't exist, show all available categories
+  cat("No data found for categories L2_1 and L2_2. Available categories:\n")
+  print(unique(suppl.table$Category))
+  stop("Please check the correct category names for TST and non-TST in your LDSC results.")
+}
+
+plot_data$eQTLs <- ifelse(plot_data$Category == "L2_1", "TSTs", "non.TSTs")
+
+# Add significance labels
+plot_data$sig <- ifelse(plot_data$FDR_enrichment < params$enrichment_fdr_threshold, "#", 
+                       ifelse(plot_data$Enrichment_p < params$nominal_p_threshold & 
+                              plot_data$FDR_enrichment >= params$enrichment_fdr_threshold, "*", ""))
+
+cat("Plot data dimensions:", dim(plot_data), "\n")
+cat("Breakdown by eQTL type:\n")
+print(table(plot_data$eQTLs))
+
+cat("Significance summary:\n")
+print(table(plot_data$sig, plot_data$eQTLs))
+
+# Check for any infinite or NA values in enrichment
+cat("Enrichment value summary:\n")
+print(summary(plot_data$Enrichment))
+cat("Number of infinite/NA enrichment values:", 
+    sum(!is.finite(plot_data$Enrichment) | is.na(plot_data$Enrichment)), "\n")
+```
+
+# plot
+```{r plot_enrichment}
+ggplot(data=plot_data, aes(x=reorder(phenotype, Enrichment), y=Enrichment, color=eQTLs)) +
+  geom_point(size=2, position=position_dodge(width=0.5)) + 
+  ylab("Heritability enrichment\n(Pr(h2g)/Pr(SNPs)") + xlab("") +
+  geom_errorbar(aes(ymin=Enrichment - Enrichment_std_error, ymax=Enrichment + Enrichment_std_error, color=eQTLs),
+                position=position_dodge(width=0.5),
+                width=0, # No caps on the error bars
+                size=0.5) +
+  geom_text(position=position_dodge(width=0.5), 
+            aes(y=Enrichment + Enrichment_std_error + 0.2, label=sig), # Adjust spacing above error bars
+            size=3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  scale_color_manual(values=c("cyan4", "darkorange")) +
+  geom_hline(yintercept=1, linetype="dashed", color="grey")
+
+```
+
+# summary
+```{r summary_table}
+if (exists("plot_data") && nrow(plot_data) > 0) {
+  cat("## Significant enrichment results\n\n")
+  
+  # Significant TST enrichments
+  sig_tst <- plot_data[plot_data$eQTLs == "TSTs" & plot_data$sig %in% c("*", "#"), ]
+  cat("### TST eGenes with significant enrichment:\n")
+  if (nrow(sig_tst) > 0) {
+    print(sig_tst[, c("phenotype", "Enrichment", "Enrichment_std_error", "Enrichment_p", "FDR_enrichment", "sig")])
+  } else {
+    cat("None found\n")
+  }
+  
+  cat("\n")
+  
+  # Significant non-TST enrichments
+  sig_nontst <- plot_data[plot_data$eQTLs == "non.TSTs" & plot_data$sig %in% c("*", "#"), ]
+  cat("### Non-TST eGenes with significant enrichment:\n")
+  if (nrow(sig_nontst) > 0) {
+    print(sig_nontst[, c("phenotype", "Enrichment", "Enrichment_std_error", "Enrichment_p", "FDR_enrichment", "sig")])
+  } else {
+    cat("None found\n")
+  }
+}
+```
+
+```{r session_info}
+sessionInfo()
+```
+

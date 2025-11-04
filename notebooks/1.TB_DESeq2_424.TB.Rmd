@@ -1,0 +1,119 @@
+---
+title: "DESeq2 analysis and PCA"
+#author: "Ping Zhang"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    number_sections: false
+    df_print: paged
+params:
+  SAMPLE_SHEET: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/1_metadata_2024_swap.corrected..xlsx"
+  FEATURECOUNTS: "/well/jknight/users/kwz374/EQTL_OXFORD/RNAseq.analysis/featureCounts/featureCounts_424.txt"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 8
+)
+
+# 
+SAMPLE_SHEET <- params$SAMPLE_SHEET
+FEATURECOUNTS <- params$FEATURECOUNTS
+
+
+```{r load_libraries}
+library(data.table)
+library(DESeq2)
+library(ggplot2)
+library(ggrepel)
+library(openxlsx)
+```
+
+# 1. Read featureCounts data 
+```{r load_data}
+countData.raw = read.table(FEATURECOUNTS, header=TRUE, sep="\t", row.names=1 )
+head(names(countData.raw))
+```
+
+# 2. Remove sex chromosomes and clean column names
+```{r preprocessing}
+if ("Chr" %in% colnames(countData.raw)) {
+countData.raw <- countData.raw[ !grepl("chrX|chrY", countData.raw$Chr), , drop = FALSE]
+}
+
+clean_names <- function(x) {
+colnames(x) <- gsub("Mapping.mapped.hisat2.", "", colnames(x))
+colnames(x) <- gsub(".hisat2.bam", "", colnames(x))
+x
+}
+countData.raw <- clean_names(countData.raw)
+```
+
+# 3. Compute TPMs and pre-filter
+```{r compute_TPMs}
+tpm <- function(counts, lengths) {
+  rate <- counts / lengths
+  rate / sum(rate) * 1e6
+}
+#
+tpms <- as.data.frame(apply(countData.raw[,c(7:430)], 2, function(x) tpm(x, countData.raw$Length)))  # 
+#Pre-filtering #drop genes with TPM <1 in more than 90% samples
+gene.exp <- tpms[rowSums(tpms >=1) >= ncol(tpms)*0.1,]
+```
+
+# 4. Read metadata and align with count data 
+```{r align_metadata}
+countData = countData.raw[,-c(1:6)]
+meta.data <- read.xlsx(SAMPLE_SHEET, sheet = 1)
+table(meta.data$TB_Status)
+########
+countData = countData[,which(names(countData) %in% meta.data$RNA.Sequencing_ID)]
+# check if match !!!!!!!!!!!!!!!!!!!!
+meta.data_2 = meta.data[match(colnames(countData), meta.data$RNA.Sequencing_ID),]
+identical(colnames(countData) , meta.data_2$RNA.Sequencing_ID)  # TRUE
+```
+
+# 5. DESeq2 analysis
+```{r DESeq2_analysis}
+if ("TB_Status" %in% colnames(meta.data_2)) {
+meta.data_2$TB_Status <- relevel(as.factor(meta.data_2$TB_Status), ref = "Latent TB")
+} else {
+stop("metadata must include TB_Status column")
+}
+
+dds <- DESeqDataSetFromMatrix(countData = round(as.matrix(countData)), colData = meta.data_2, design = ~ TB_Status)
+dds <- DESeq(dds)
+normalized_counts <- counts(dds, normalized = TRUE)
+#fwrite(as.data.table(normalized_counts, keep.rownames = "gene"), file.path(RESULTS_DIR, "TB_normalized_gene.counts.csv"))
+```
+
+# 6. PCA plot
+```{r PCA_plot}
+vsd <- vst(dds, blind=TRUE)
+vsd$data = as.character(vsd$data)
+vsd$ETHNICITY_PCA = as.character(vsd$ETHNICITY_PCA)
+
+plotPCA(vsd, "ETHNICITY_PCA")
+
+data <- plotPCA(vsd, intgroup=c("TB_Status"),returnData=TRUE)
+data$TB_Status = ifelse(data$TB_Status == "Active TB", "Active TB", ifelse(data$TB_Status == "Latent TB", "Latent TB-Day2", "Latent TB-Day7"))
+
+percentVar <- round(100 * attr(data, "percentVar"))
+ggplot(data, aes(PC1, PC2, col=TB_Status )) +
+  geom_point(size=1) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) + 
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + theme_bw() +theme(panel.grid.minor = element_blank())  + 
+  scale_color_brewer(palette="Set1") + stat_ellipse(geom="path", alpha = 1, show.legend = FALSE) + theme(legend.position="top")
+```
+
+## Session Information
+
+```{r session_info}
+sessionInfo()
+```
+

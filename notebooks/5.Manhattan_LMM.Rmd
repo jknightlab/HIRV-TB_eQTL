@@ -1,0 +1,196 @@
+---
+title: "Manhattan plot — cis-eQTLs (LMM model)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: false
+    code_folding: show
+params:
+  ciseQTLs_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/PC47_LMM.resul_sig.txt.gz"
+  snpsloc_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/input_lmm/snpsloc_rsid_ALL.267.TB.txt.gz"
+  geneloc_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/gencode.v31lift37_gene.txt"
+  TST_genes_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/AllTSTResponseGenes.csv"
+  output_pdf: "./HIRV_cis_eQTLs_manhattan.pdf"
+  output_png: "./HIRV_cis_eQTLs_manhattan.png"
+  subsample_non_sig_prop: 0.10
+---
+
+```{r setup_global, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 12, fig.height = 4)
+```
+
+```{r libraries_unique}
+library(data.table)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+```
+
+## Introduction
+This R Markdown creates a Manhattan plot where each gene is represented by its lead cis-eQTL (minimum normial p values). It also plots a TSS distance histogram. 
+
+## Load data
+
+```{r load_data_unique}
+
+ciseQTLs = fread(params$ciseQTLs_path)
+location = fread(params$snpsloc_path)
+
+# merge
+data = merge(location, ciseQTLs, by = "snp", all = FALSE)
+
+# Standardise columns
+if (!("chr" %in% names(data))) {
+  # try alternatives
+  if ("CHR" %in% names(data)) data$chr <- data$CHR
+}
+data$name = paste0(data$snp, "_", data$gene_name)
+keep_cols <- intersect(c("chr","pos","snp","gene_name","name","p"), names(data))
+data = data[, ..keep_cols]
+setnames(data, names(data), tolower(names(data)))
+setnames(data, c("chr","pos","snp","gene_name","name","p"), c("chr","bp","risd","gene_name","snp_id","p"), skip_absent=TRUE)
+
+# coerce types
+data$chr <- as.numeric(gsub("chr", "", as.character(data$chr)))
+data$bp <- as.numeric(as.character(data$bp))
+data <- data[!is.na(data$chr) & !is.na(data$bp)]
+```
+
+## Add gene locations and compute distance to TSS
+
+```{r gene_loc_unique}
+if (!file.exists(params$geneloc_path)) stop("geneloc file not found: ", params$geneloc_path)
+geneloc <- fread(params$geneloc_path)
+
+# pick gene_name column robustly
+if ("V7" %in% names(geneloc) & "V8" %in% names(geneloc)) {
+  geneloc$gene_name = ifelse(geneloc$V7 %in% c("KNOWN","NOVEL"), geneloc$V8, geneloc$V7)
+} else if ("gene_name" %in% names(geneloc)) {
+  geneloc$gene_name = geneloc$gene_name
+} else {
+  stop("Unexpected geneloc format — cannot determine gene name column")
+}
+
+geneloc = geneloc[!duplicated(geneloc$gene_name),]
+
+yy = merge(data, geneloc, by = "gene_name", all.x = TRUE)
+if (nrow(yy) == 0) stop("Merge with gene locations produced 0 rows — check gene names")
+
+# compute TSS depending on strand column V5 or strand if present
+strand_col <- if ("V5" %in% names(yy)) "V5" else if ("strand" %in% names(yy)) "strand" else NA
+start_col <- if ("V2" %in% names(yy)) "V2" else if ("start" %in% names(yy)) "start" else NA
+end_col <- if ("V3" %in% names(yy)) "V3" else if ("end" %in% names(yy)) "end" else NA
+
+if (is.na(strand_col) | is.na(start_col) | is.na(end_col)) {
+  warning("Gene location file missing expected columns for TSS calculation. TSS will be NA where not computable.")
+  yy$gene_tss <- NA
+} else {
+  yy$gene_tss = ifelse(yy[[strand_col]] == "+", yy[[start_col]], yy[[end_col]])
+}
+
+yy$distance_kb = (yy$gene_tss - yy$bp) / 1000
+yy$distance_bp = yy$gene_tss - yy$bp
+
+save_table = yy[, .(gene_name, chr, bp, risd, snp_id, gene_tss, distance_bp)]
+setnames(save_table, c("gene_name","chr","bp","risd","snp_id","gene_tss","distance_bp"),
+         c("gene_name","CHR","BP(hg19)","SNP","Pair","gene_tss","distance(bp)"))
+#write.table(save_table, "PC47_LMM.resul_TSS.distance.txt", row.names = FALSE, quote = FALSE, sep = "\t")
+cat("Wrote PC47_LMM.resul_TSS.distance.txt with", nrow(save_table), "rows\n")
+```
+
+## Distance distribution plot
+
+```{r dist_hist_unique, fig.width=7, fig.height=4}
+dtss = yy$distance_kb
+dtss = dtss[!is.na(dtss)]
+if (length(dtss) == 0) {
+  plot.new(); text(0.5,0.5,"No TSS distances available")
+} else {
+  h <- hist(dtss, breaks=100, col="#c77cff",
+            main="Distance distribution of cis-eQTLs",
+            xlab="Distance between eQTL and TSS (KB)")
+  xfit <- seq(min(dtss), max(dtss), length=40)
+  yfit <- dnorm(xfit, mean=mean(dtss), sd=sd(dtss))
+  yfit <- yfit * diff(h$mids[1:2]) * length(dtss)
+  lines(xfit, yfit, col="grey", lwd=2)
+}
+```
+
+## subsample non-significant points (speeds up plotting)
+
+```{r subsample_unique}
+sig_cut <- 0.001
+sig.dat <- data %>% filter(p < sig_cut)
+notsig.dat <- data %>% filter(p >= sig_cut)
+
+prop <- params$subsample_non_sig_prop
+if (nrow(notsig.dat) > 0) {
+  notsig.sample <- notsig.dat %>% slice_sample(prop = prop)
+  data2 <- bind_rows(sig.dat, notsig.sample)
+} else {
+  data2 <- data
+}
+data2$BP <- as.numeric(data2$bp)
+data2$CHR <- as.integer(data2$chr)
+```
+
+## Compute cumulative positions for Manhattan plot
+
+```{r prepare_manhattan_unique}
+don <- data2 %>%
+  group_by(CHR) %>%
+  summarise(chr_len = max(BP, na.rm = TRUE)) %>%
+  mutate(tot = cumsum(chr_len) - chr_len) %>%
+  select(-chr_len) %>%
+  left_join(data2, ., by = c("CHR" = "CHR")) %>%
+  arrange(CHR, BP) %>%
+  mutate(BPcum = BP + tot)
+
+axisdf = don %>% group_by(CHR) %>% summarize(center = (max(BPcum, na.rm=TRUE) + min(BPcum, na.rm=TRUE)) / 2)
+```
+
+## Highlight TST genes and plot
+
+```{r manhattan_unique, fig.width=12, fig.height=4}
+if (file.exists(params$TST_genes_path)) {
+  TST <- fread(params$TST_genes_path)
+  if ("MaxFC" %in% names(TST)) TST <- TST[TST$MaxFC >= 0.58, ]
+  if ("HGNC" %in% names(TST)) TST$gene_name = TST$HGNC
+} else {
+  TST <- data.table(gene_name = character(0))
+}
+
+# pick lead SNP per gene (minimum p-value)
+don$p <- as.numeric(as.character(don$p))
+cat(print(min(don$p, na.rm=TRUE)))
+
+don2 <- setDT(don)[, .SD[which.min(p)], by = gene_name]
+
+cat("Lead SNPs selected:", nrow(don2), "unique genes\n")
+cat("Minimum p-value in plot data:", min(don2$p, na.rm = TRUE), "\n")
+
+don2$p <- as.numeric(as.character(don2$p))
+don2$log10p <- -log10(don2$p)
+
+g <- ggplot(don2, aes(x = BPcum, y = log10p)) +
+  geom_point(aes(color = as.factor(CHR)), alpha = 0.6, size = 0.6) +
+  scale_color_manual(values = rep(c("grey", "black"), 22)) +
+  scale_x_continuous(label = axisdf$CHR, breaks = axisdf$center) +
+  ylab(expression("-Log"["10"]~italic("P"))) + xlab("Genomic position (Chr)") +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        axis.text.x = element_text(angle = 30, hjust = 1),
+        plot.title = element_text(face = "bold")) +
+  ggtitle("HIRV_LMM lead cis-eQTLs (lead SNP per gene)")+
+  geom_point(data = don2[don2$gene_name %in% TST$gene_name,], col = "red", alpha = 1, size = 0.6) +
+  geom_text_repel(data = don2[don2$gene_name %in% TST$gene_name & don2$p < 1e-50,],
+                  aes(label = gene_name), size = 3.5, min.segment.length = 0, max.overlaps = Inf)
+
+print(g)
+```
+
+```{r session_info}
+sessionInfo()
+```

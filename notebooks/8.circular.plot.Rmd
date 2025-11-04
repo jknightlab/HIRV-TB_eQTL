@@ -1,0 +1,240 @@
+---
+title: "Circos visualisation for trans-eQTLs associated with TST response genes"
+author: "Ping Zhang"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    code_folding: show
+params:
+  trans_data_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/Matrix_eQTL/Day7_trans_subset.day7cis_locus.sig.txt.gz"
+  cis_eqtl_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/fastQTL_permut/permute_full_d7.txt.gz"
+  TST_genes_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/AllTSTResponseGenes.csv"
+  gene_annotation_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/gencode.v31lift37_gene.txt"
+  cross_mappability_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/hg19_gencode19_75merExon_36merUTR_2mismatch_cross_mappability.txt.gz"
+  snp_location_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/1.TB.day7.input/snpsloc_rsid_day7.latent.TB.txt.gz"
+  gene_location_path: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/1.TB.day7.input/geneloc.txt"
+  FDR_threshold: 0.05
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 5.5, fig.height = 5)
+```
+
+```{r load_libraries}
+library(data.table)
+library(dplyr)
+library(circlize)
+```
+
+# Introduction
+This report performs trans-eQTL associatitons with cross-mappability filtering and creates circos plots.
+
+
+```{r load_data}
+# Load trans-eQTL data
+cat("Loading trans-eQTL data...\n")
+trans <- fread(params$trans_data_path)
+cat("Trans-eQTL data dimensions:", dim(trans), "\n")
+
+# Load TST genes
+cat("Loading TST genes...\n")
+TST <- fread(params$TST_genes_path)
+TST_filtered <- TST[TST$MaxFC >= 0.58, ]
+cat("TST genes (FC >=0.58)", nrow(TST_filtered), "\n")
+
+# Annotate trans-eQTLs with TST status
+trans$trans.eGene.TSTs <- ifelse(trans$Gene %in% TST_filtered$HGNC, "yes", "no")
+cat("Trans-eGene TST breakdown:\n")
+print(table(trans$trans.eGene.TSTs))
+
+# Load cis-eQTL data
+cat("Loading cis-eQTL data...\n")
+eGene.lead <- fread(params$cis_eqtl_path)
+colnames(eGene.lead) <- c('Gene', 'num_var', 'beta_shape1', 'beta_shape2', 'Dummy',
+                         'variant_id', 'tss_distance',
+                         'pval_nominal', 'slope', 'pval_perm', 'pval_beta')
+
+# Keep relevant columns and calculate FDR
+eGene.lead <- eGene.lead[, c('Gene', 'num_var', 'variant_id', 'tss_distance', 
+                             'pval_nominal', 'slope', 'pval_perm', 'pval_beta')]
+eGene.lead$p_fdr <- p.adjust(eGene.lead$pval_beta, method = "fdr")
+
+cat("Total cis genes:", length(unique(eGene.lead$Gene)), "\n")
+
+# Filter significant cis-eQTLs and TST genes
+ciseQTLs <- eGene.lead[!is.na(eGene.lead$p_fdr) & eGene.lead$p_fdr < params$FDR_threshold, ]
+ciseQTLs <- ciseQTLs[ciseQTLs$Gene %in% TST_filtered$HGNC, ]
+cat("Significant cis-eQTLs in TST genes:", nrow(ciseQTLs), "\n")
+
+# Merge cis and trans eQTLs
+cat("Merging cis and trans eQTLs...\n")
+cis.trans <- merge(ciseQTLs, trans, by.x = "variant_id", by.y = "snp")
+cat("Cis-trans pairs before filtering:", nrow(cis.trans), "\n")# Load trans-eQTL data
+cat("Loading trans-eQTL data...\n")
+trans <- fread(params$trans_data_path)
+cat("Trans-eQTL data dimensions:", dim(trans), "\n")
+
+
+# Annotate trans-eQTLs with TST status
+trans$trans.eGene.TSTs <- ifelse(trans$Gene %in% TST_filtered$HGNC, "yes", "no")
+cat("Trans-eGene TST breakdown:\n")
+print(table(trans$trans.eGene.TSTs))
+
+# Load cis-eQTL data
+cat("Loading cis-eQTL data...\n")
+eGene.lead <- fread(params$cis_eqtl_path)
+colnames(eGene.lead) <- c('Gene', 'num_var', 'beta_shape1', 'beta_shape2', 'Dummy',
+                         'variant_id', 'tss_distance',
+                         'pval_nominal', 'slope', 'pval_perm', 'pval_beta')
+
+# Keep relevant columns and calculate FDR
+eGene.lead <- eGene.lead[, c('Gene', 'num_var', 'variant_id', 'tss_distance', 
+                             'pval_nominal', 'slope', 'pval_perm', 'pval_beta')]
+eGene.lead$p_fdr <- p.adjust(eGene.lead$pval_beta, method = "fdr")
+
+cat("Total cis genes:", length(unique(eGene.lead$Gene)), "\n")
+
+# Filter significant cis-eQTLs and TST genes
+ciseQTLs <- eGene.lead[!is.na(eGene.lead$p_fdr) & eGene.lead$p_fdr < params$FDR_threshold, ]
+ciseQTLs <- ciseQTLs[ciseQTLs$Gene %in% TST_filtered$HGNC, ]
+cat("Significant cis-eQTLs in TST genes:", nrow(ciseQTLs), "\n")
+
+# Merge cis and trans eQTLs
+cat("Merging cis and trans eQTLs...\n")
+cis.trans <- merge(ciseQTLs, trans, by.x = "variant_id", by.y = "snp")
+cat("Cis-trans pairs before filtering:", nrow(cis.trans), "\n")
+```
+
+# Filter Pseudogenes and Cross-Mappable Pairs
+```{r filter_pseudogenes_crossmappability}
+# Load gene annotation and remove pseudogenes
+cat("Loading gene annotations...\n")
+gene.name <- fread(params$gene_annotation_path)
+gene.name <- gene.name[!gene.name$V6 %like% "pseudogene", ]
+cat("Gene types after removing pseudogenes:\n")
+print(table(gene.name$V6))
+
+# Create gene name mapping
+gene.name$gene_name <- ifelse(gene.name$V7 %in% c("KNOWN", "NOVEL"), gene.name$V8, gene.name$V7)
+gene.name <- gene.name[!duplicated(gene.name$gene_name), ]
+gene.name$gene.id <- gsub("[.].*", "", gene.name$V4)
+gene.name <- gene.name[, c("gene_name", "gene.id")]
+
+# Load cross-mappability data
+cat("Loading cross-mappability data...\n")
+if (file.exists(params$cross_mappability_path)) {
+  cross.map <- fread(params$cross_mappability_path)
+  cross.map$gene.A <- gsub("[.].*", "", cross.map$V1)
+  cross.map$gene.B <- gsub("[.].*", "", cross.map$V2)
+  
+  # Filter cross-mappable pairs involving cis-eQTL genes
+  cross.map_2 <- merge(cross.map, gene.name, by.x = "gene.A", by.y = "gene.id")
+  cross.map_3 <- cross.map_2[cross.map_2$gene_name %in% ciseQTLs$Gene, ]
+  cross.map_4 <- merge(cross.map_3, gene.name, by.x = "gene.B", by.y = "gene.id")
+  cross.map_4$cross.pair <- paste0(cross.map_4$gene_name.x, "_", cross.map_4$gene_name.y)
+  cross.map_5 <- cross.map_4[!duplicated(cross.map_4$cross.pair), ]
+  
+  cat("Cross-mappable pairs involving cis-eQTL genes:", nrow(cross.map_5), "\n")
+  
+  # Remove cross-mapped pairs from cis-trans data
+  cis.trans$cis.trans.pair <- paste0(cis.trans$Gene.x, "_", cis.trans$Gene.y)
+  cis.trans_2 <- cis.trans[!cis.trans$cis.trans.pair %in% cross.map_5$cross.pair, ]
+  
+  cat("Cis-trans pairs after cross-mappability filtering:", nrow(cis.trans_2), "\n")
+} else {
+  cat("Cross-mappability file not found, skipping cross-mappability filtering.\n")
+  cis.trans_2 <- cis.trans
+  cis.trans_2$cis.trans.pair <- paste0(cis.trans_2$Gene.x, "_", cis.trans_2$Gene.y)
+}
+
+cat("Final TST breakdown in trans-eGenes:\n")
+print(table(cis.trans_2$trans.eGene.TSTs))
+```
+
+# Circos plot
+```{r circos_plot}
+# Prepare data for circos plot
+cat("Preparing data for circos plot...\n")
+
+# Load SNP and gene locations
+snp.location <- fread(params$snp_location_path)
+gene.location <- fread(params$gene_location_path)
+
+# Filter for TST trans-eGenes and merge with locations
+plot_data <- cis.trans_2[cis.trans_2$trans.eGene.TSTs == "yes", ]
+plot_data <- merge(snp.location, plot_data, by.x = "snp", by.y = "variant_id")
+plot_data <- merge(plot_data, gene.location, by.x = "Gene.y", by.y = "gene_name")
+
+cat("TST trans-eGenes for circos plot:", nrow(plot_data), "\n")
+
+if (nrow(plot_data) > 0) {
+  # Create circos plot
+  circos.clear()
+  circos.par("gap.degree" = rep(c(2, 4), 11),  # gap between chromosomes
+             "cell.padding" = c(0, 0, 0, 0))   # gap between tracks
+  
+  # Initialize with ideogram
+  circos.initializeWithIdeogram(
+    species = "hg19", 
+    chromosome.index = paste0("chr", 1:22), 
+    plotType = NULL
+  )
+  
+  # Add cis genes (outer ring)
+  bed_cis <- data.frame(plot_data[!duplicated(plot_data$Gene.x), 
+                                 c("chr.x", "pos", "pos", "Gene.x")])
+  circos.genomicLabels(bed_cis, 
+                       labels.column = 4, 
+                       side = "outside", 
+                       cex = 0.4,
+                       connection_height = 0.04,
+                       col = "cyan4")
+  
+  # Add ideogram with chromosome labels
+  circos.track(ylim = c(0, 1), panel.fun = function(x, y) {
+    chr <- CELL_META$sector.index
+    xlim <- CELL_META$xlim
+    ylim <- CELL_META$ylim
+    circos.rect(xlim[1], 0, xlim[2], 1, col = "white")
+    circos.text(mean(xlim), mean(ylim), chr, cex = 0.3, col = "black",
+                facing = "inside", niceFacing = TRUE)
+  }, track.height = 0.03, bg.border = 0)
+  
+  # Add trans genes (inner ring)
+  bed_trans <- data.frame(plot_data[!duplicated(plot_data$Gene.y), 
+                                   c("chr.y", "left", "left", "Gene.y")])
+  circos.genomicLabels(bed_trans, 
+                       labels.column = 4, 
+                       cex = 0.3, 
+                       side = "inside",  
+                       connection_height = 0.04,
+                       col = "darkorange", 
+                       line_col = as.numeric(factor(bed_trans$chr.y)))
+  
+  # Add links between cis and trans genes
+  cis_info <- data.frame(plot_data[, c("chr.x", "pos", "pos")])
+  trans_info <- data.frame(plot_data[, c("chr.y", "left", "left")])
+  
+  circos.genomicLink(cis_info, trans_info, 
+                     directional = 1, 
+                     col = scales::alpha("grey", alpha = 0.3), 
+                     arr.type = "curved", 
+                     arr.width = 0.08, 
+                     arr.length = 0.1,
+                     border = NA)
+  
+  circos.clear()
+  cat("Circos plot created successfully.\n")
+} else {
+  cat("No TST trans-eGenes found for circos plot.\n")
+}
+```
+
+```{r session_info}
+sessionInfo()
+```
+
+
+

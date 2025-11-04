@@ -1,0 +1,250 @@
+---
+title: "PCA Analysis - TB and 1000 Genomes"
+#author: "Ping Zhang"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    code_folding: show
+params:
+  PCA_1KG_EIGENVEC: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/Imputation/Michigan/PCA.with.1KG.data/plink.eigenvec"
+  PCA_1KG_EIGENVAL: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/Imputation/Michigan/PCA.with.1KG.data/plink.eigenval"
+  PCA_TB_EIGENVEC: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/LMM.analysis/TB.ALL.eigenvec"
+  PCA_TB_EIGENVAL: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/LMM.analysis/TB.ALL.eigenval"
+  SAMPLE_SHEET: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/temp/1_metadata_2024_swap.corrected..xlsx"
+  SHEET_NUM: 2
+  RESULTS_DIR: "/well/jknight/users/kwz374/EQTL_OXFORD/Analysis_freeze.2024/JupyterLab/"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 6,
+  fig.height = 6
+)
+
+# Create results directory
+dir.create(params$RESULTS_DIR, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Introduction
+This report performs Principal Component Analysis (PCA) on TB samples combined with 1000 Genomes data to visualize population structure and identify significant principal components.
+
+## Load Libraries
+
+```{r libraries}
+library(openxlsx)
+library(ggplot2)
+library(ggrepel)
+library(scatterplot3d)
+library(data.table)
+library(reshape)
+```
+
+## Part 1: PCA with 1000 Genomes Reference
+
+### Load PCA Data and Metadata
+
+```{r load_pca_1kg}
+# Read in the eigenvectors produced in PLINK
+pca <- read.table(params$PCA_1KG_EIGENVEC, 
+                  header = FALSE, skip = 0, sep = ' ')
+rownames(pca) <- pca[,2]
+pca <- pca[,3:ncol(pca)]
+colnames(pca) <- paste('PC', c(1:20), sep = '')
+
+# Read in the PED data
+PED <- read.xlsx(params$SAMPLE_SHEET, sheet = params$SHEET_NUM)
+PED <- PED[which(PED$Individual_ID %in% rownames(pca)), ]
+PED <- PED[match(rownames(pca), PED$Individual_ID),]
+cat("Sample IDs match:", all(PED$Individual_ID == rownames(pca)), "\n")
+```
+
+### Prepare Data for Visualization
+
+```{r prepare_data_1kg}
+# Merge PCA results with metadata
+pca$sample.name = rownames(pca)
+plot <- merge(pca, PED, by.x = "sample.name", by.y = "Individual_ID")
+
+# Create super population categories
+plot$super.population <- ifelse(plot$Population %in% c("ACB","ASW","ESN","GWD","LWK","MSL","YRI"), "AFR",
+                                ifelse(plot$Population %in% c("CLM","MXL","PEL","PUR"), "AMR",
+                                       ifelse(plot$Population %in% c("CDX","CHB","CHS","JPT","KHV"), "EAS",
+                                              ifelse(plot$Population %in% c("CEU","FIN","GBR","IBS","TSI"), "EUR",
+                                                     ifelse(plot$Population %in% c("BEB","GIH","ITU","PJL","STU"), "SAS", "HIRV TB")))))
+
+cat("Super population distribution:\n")
+print(table(plot$super.population))
+
+# Calculate percentage variance explained
+eigenval <- scan(params$PCA_1KG_EIGENVAL)
+percentVar <- data.frame(PC = 1:20, pve = sprintf("%.1f", eigenval/sum(eigenval)*100))
+
+# Set factor levels
+plot$super.population = factor(plot$super.population, 
+                               levels = c("AFR", "AMR", "EAS", "EUR", "SAS", "HIRV TB"))
+```
+
+### 2D PCA visualisation
+
+```{r pca_2d_1kg}
+# PC1 vs PC2
+ggplot(plot, aes(x = PC1, y = PC2, color = super.population)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(title = "PCA: TB Samples with 1000 Genomes Reference",
+       x = paste0("PC1 (", percentVar$pve[1], "%)"),
+       y = paste0("PC2 (", percentVar$pve[2], "%)"),
+       color = "Super Population") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# PC3 vs PC4
+ggplot(plot, aes(x = PC3, y = PC4, color = super.population)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(title = "PCA: PC3 vs PC4",
+       x = paste0("PC3 (", percentVar$pve[3], "%)"),
+       y = paste0("PC4 (", percentVar$pve[4], "%)"),
+       color = "Super Population") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+### 3D PCA visualisation
+
+```{r pca_3d_1kg}
+# 3D PCA for HIRV TB samples only
+plot2 = plot[plot$super.population %in% "HIRV TB",]
+colors <- c("#999999", "#E69F00", "#56B4E9", "red", "purple")
+colors <- colors[as.numeric(as.factor(plot2$Population))]
+
+s3d <- scatterplot3d(plot2$PC1, plot2$PC2, plot2$PC3,
+                    xlab = "PC1", ylab = "PC2", zlab = "PC3", 
+                    pch = 16, color = colors, main = "3D PCA: HIRV TB Samples")
+legend("right", legend = levels(as.factor(plot2$Population)),
+       col = c("#999999", "#E69F00", "#56B4E9", "red", "purple"), pch = 16)
+```
+
+## Part 2: PCA with TB samples only
+
+### Load TB-only PCA Data
+
+```{r load_pca_tb}
+# Read in eigenvectors for TB samples only
+pca_tb <- read.table(params$PCA_TB_EIGENVEC, 
+                     header = FALSE, skip = 0, sep = ' ')
+rownames(pca_tb) <- pca_tb[,2]
+pca_tb <- pca_tb[,3:ncol(pca_tb)]
+colnames(pca_tb) <- paste('PC', c(1:20), sep = '')
+
+# Merge with metadata
+pca_tb$sample.name = rownames(pca_tb)
+plot_tb <- merge(pca_tb, PED, by.x = "sample.name", by.y = "Individual_ID")
+
+cat("Population distribution in TB samples:\n")
+print(table(plot_tb$Population))
+
+# Calculate percentage variance explained for TB-only data
+eigenval_tb <- scan(params$PCA_TB_EIGENVAL)
+percentVar_tb <- data.frame(PC = 1:20, pve = sprintf("%.1f", eigenval_tb/sum(eigenval_tb)*100))
+```
+
+### TB-only PCA visualisation
+
+```{r pca_tb_only}
+# 2D PCA for TB samples
+ggplot(plot_tb, aes(x = PC1, y = PC2, color = Population)) +
+  geom_point(alpha = 0.7, size = 3) +
+  labs(title = "PCA: TB Samples Only",
+       x = paste0("PC1 (", percentVar_tb$pve[1], "%)"),
+       y = paste0("PC2 (", percentVar_tb$pve[2], "%)")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# 3D PCA for TB samples
+colors_tb <- c("#999999", "#E69F00", "#56B4E9", "red", "purple")
+colors_tb <- colors_tb[as.numeric(as.factor(plot_tb$Population))]
+
+s3d_tb <- scatterplot3d(plot_tb$PC1, plot_tb$PC2, plot_tb$PC3,
+                       xlab = "PC1", ylab = "PC2", zlab = "PC3", 
+                       pch = 16, color = colors_tb, 
+                       main = "3D PCA: All TB Samples")
+legend("right", legend = levels(as.factor(plot_tb$Population)),
+       col = c("#999999", "#E69F00", "#56B4E9", "red", "purple"), pch = 16)
+```
+
+## Part 3: determine significant PCs associated with population structure
+```{r pc_association}
+# Test each PC for association with population
+dat2 = list()
+t = colnames(plot_tb[,2:21]) # 20 PCs
+
+for (i in t) {
+  formula <- as.formula(paste(i, "~ Population"))
+  fit = lm(formula, data = plot_tb)
+  
+  dat2[[i]] = data.frame(
+    beta.AMR = coef(fit)[2],
+    beta.EAS = coef(fit)[3],
+    beta.EUR = coef(fit)[4],
+    beta.SAS = coef(fit)[5],
+    p.valueAMR = coef(summary(fit))[2,4],
+    p.valueEAS = coef(summary(fit))[3,4],
+    p.valueEUR = coef(summary(fit))[4,4],
+    p.valueASA = coef(summary(fit))[5,4],
+    PC = gsub("PC", "", i)
+  )
+}
+
+dat2 = as.data.frame(do.call(rbind, dat2))
+
+# Adjust p-values for multiple testing
+dat2$adjp.AMR = p.adjust(dat2$p.valueAMR, method = "fdr")
+dat2$adjp.EAS = p.adjust(dat2$p.valueEAS, method = "fdr")
+dat2$adjp.EUR = p.adjust(dat2$p.valueEUR, method = "fdr")
+dat2$adjp.ASA = p.adjust(dat2$p.valueASA, method = "fdr")
+
+cat("Significant PC associations found:\n")
+print(dat2[dat2$adjp.AMR < 0.05 | dat2$adjp.EAS < 0.05 | 
+           dat2$adjp.EUR < 0.05 | dat2$adjp.ASA < 0.05, ])
+```
+
+### Visualise significant PCs
+```{r visualize_significant_pcs}
+# Prepare data for visualization
+df = dat2[,c("adjp.AMR", "adjp.EAS", "adjp.EUR", "adjp.ASA", "PC")]
+df = melt(df, id = "PC")
+
+# Create bar plot of adjusted p-values
+ggplot(df, aes(reorder(PC, as.numeric(PC)), -log10(value), fill = variable)) +
+  geom_bar(stat = "identity", position = position_dodge()) +  
+  theme_bw() + 
+  theme(panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Principal Component", 
+       y = "-Log10(Adjusted P-value)",
+       title = "Association of PCs with Population Structure",
+       fill = "Population") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dotted", color = "red")
+```
+
+## Summary
+```{r summary}
+cat("### Analysis Summary\n")
+cat("- Total samples in 1KG + TB analysis:", nrow(plot), "\n")
+cat("- Total samples in TB-only analysis:", nrow(plot_tb), "\n")
+cat("- Number of significant PC-population associations:", 
+sum(dat2$adjp.EAS < 0.05 | dat2$adjp.EUR < 0.05 | dat2$adjp.ASA < 0.05), "\n")
+#cat("- PCs with ≥2 adj-p < 0.05:",
+#    sum(rowSums(dat2[, c("adjp.AMR","adjp.EAS","adjp.EUR","adjp.ASA")] < 0.05, na.rm = TRUE) >= 2), "\n")
+
+```
+
+## Session Information
+
+```{r session_info}
+sessionInfo()
+```
