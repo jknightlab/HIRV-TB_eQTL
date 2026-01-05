@@ -142,5 +142,5 @@ We are yet to unlock sufficient understanding of the immunological determinants 
 ---
 
 ## ✉️ Contact
-For questions, please contact:  
+For any questions related to the code, please contact:  
 **Ping Zhang**  (<ping.zhang@well.ox.ac.uk>)
