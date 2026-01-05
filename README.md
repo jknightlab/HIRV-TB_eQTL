@@ -1,14 +1,16 @@
-# HIRV-TB_eQTL-paper
+# HIRV-TB_eQTL
 
 ## Overview
 
 This repository contains scripts for the paper:
 
-Author list xxxxx
+“**Common genetic determinants of dynamic human *in vivo* immune response to Mycobacterium tuberculosis.**”
 
-“**Common genetic determinants of longitudinal human *in vivo* immune response to Mycobacterium tuberculosis.**”
+Ping Zhang, Carolin T Turner, Aneesh Chandran, Joshua Rosenheim, Jana Jiang, Lucy K Bell, Santino Capocci, Marc Lipman, Heinke Kunst, Stefan Lozewicz, Gillian S Tomlinson, Julian C Knight and Mahdad Noursadeghi
 
-xxxxxxx
+Abstract
+
+We are yet to unlock sufficient understanding of the immunological determinants of protection and pathogenesis in tuberculosis (TB) to stratify disease-risk following infection or develop an effective vaccine. Given evidence of common genetic susceptibility to TB, we sought to identify single nucleotide polymorphisms (SNPs) affecting transcriptional regulation of immune responses to Mycobacterium tuberculosis (Mtb) in order to relate immune response variation to disease-risk. We undertook a genome-wide expression quantitative trait loci (eQTL) study of human in vivo immune responses at transcriptional level to a standardised immunogenic challenge using the tuberculin skin test (TST), which recapitulates the molecular repertoire of cell mediated immunity at the site of TB disease. 267 individuals with latent or active TB underwent genotyping paired with 415 RNAseq of TST biopsies at day 2 to capture maximal inflammatory responses, and/or day 7 to capture proliferation/enrichment of antigen-specific T cells. We identified common cis-acting SNPs for 1719 of 5526 TST response genes, most enriched for antigen presentation and T cell activation pathways due to SNPs associated with HLA class II expression levels. We found associations between non-coding QTLs for HLA-DR expression with expansion of HLA-DR restricted Mtb-reactive T cells in day 7 TSTs, suggesting a potential interaction with coding variants to modulate antigen-specific responses. Interestingly, the greatest number of trans-acting QTLs were identified in day 7 TST data and enriched for cell-cycle/proliferation pathways, via a cis-effect on NCAPD3 (involved in mitotic chromosome assembly and segregation) that also associated with Mtb-reactive T cell responses. Co-localisation analysis with GWAS data revealed potential new disease susceptibility loci. We have established a catalogue of common genetic polymorphisms that influence variation of human in vivo immune responses, to enable investigation of novel mechanistic insights into the immunological determinants of TB. Variation in antigen-specific T cell proliferation may be regulated by coding/non-coding SNPs in HLA class II genes, and by non-coding SNPs that regulate cell proliferation machinery independent of antigen.
 
 
 ## Pipeline
