@@ -2,14 +2,12 @@
 
 ## Overview
 
-This repository contains scripts for the paper:
+This repository contains scripts used for eQTL mapping and related analyses for the paper:
 
-**Common genetic determinants of dynamic human *in vivo* immune response to Mycobacterium tuberculosis.**
+> *Common genetic determinants of dynamic human* ***in vivo*** *immune response to Mycobacterium tuberculosis*  
+> <sub>Ping Zhang, Carolin T Turner, Aneesh Chandran, Joshua Rosenheim, Jana Jiang, Lucy K Bell, Santino Capocci, Marc Lipman, Heinke Kunst, Stefan Lozewicz, Gillian S Tomlinson, Julian C Knight, and Mahdad Noursadeghi</sub>
 
-Ping Zhang, Carolin T Turner, Aneesh Chandran, Joshua Rosenheim, Jana Jiang, Lucy K Bell, Santino Capocci, Marc Lipman, Heinke Kunst, Stefan Lozewicz, Gillian S Tomlinson, Julian C Knight and Mahdad Noursadeghi
-
-Abstract: 
-We lack sufficient understanding of the immunological determinants of protection and pathogenesis in tuberculosis (TB) to stratify disease risk or develop effective vaccines. Given evidence of shared genetic susceptibility, we investigated how genetic variation influences transcriptional immune responses to Mycobacterium tuberculosis (Mtb). We performed a genome-wide expression quantitative trait loci (eQTL) study of human in vivo immune responses using the tuberculin skin test (TST), which models cell-mediated immunity at the site of TB disease. Colocalisation with GWAS data revealed potential novel TB susceptibility loci. We analysed paired genotyping and RNA-seq data from 267 individuals with latent or active TB, using TST biopsies at day 2 (inflammation) and day 7 (antigen-specific T cell expansion). We identified cis-eQTLs for 1,719 TST-responsive genes, enriched for antigen presentation and T cell activation pathways, largely driven by HLA class II variants. Non-coding HLA-DR eQTLs were associated with expansion of Mtb-reactive T cells, while trans-eQTLs at day 7 highlighted cell-cycle regulation via NCAPD3. 
+See also [carolinturner/tst_eqtl](https://github.com/carolinturner/tst_eqtl) for code used to generate figure panels and source data.
 
 ## Pipeline
 
