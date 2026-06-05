@@ -18,7 +18,7 @@ See also [carolinturner/tst_eqtl](https://github.com/carolinturner/tst_eqtl) for
 ---
 
 ** directory layout:**
-<sub>
+
 ```
 .
 ├── README.md
@@ -68,8 +68,6 @@ See also [carolinturner/tst_eqtl](https://github.com/carolinturner/tst_eqtl) for
 3 directories, 42 files
 
 ```
-<sub>
-
 ---
 | Step    | Script                                            | Description                                                                         |
 | ------- | ------------------------------------------------- | ----------------------------------------------------------------------------------- |
