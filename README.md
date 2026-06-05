@@ -12,13 +12,13 @@ See also [carolinturner/tst_eqtl](https://github.com/carolinturner/tst_eqtl) for
 ## Pipeline
 
 <div align="center">
-  <img src="docs/2.png" alt="Screenshot" width="80%" />
+  <img src="docs/2.png" alt="Screenshot" width="60%" />
 </div>
 
 ---
 
 ** directory layout:**
-
+<sub>
 ```
 .
 ├── README.md
@@ -68,6 +68,7 @@ See also [carolinturner/tst_eqtl](https://github.com/carolinturner/tst_eqtl) for
 3 directories, 42 files
 
 ```
+<sub>
 
 ---
 | Step    | Script                                            | Description                                                                         |
