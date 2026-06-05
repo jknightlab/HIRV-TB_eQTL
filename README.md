@@ -5,7 +5,7 @@
 This repository contains scripts used for eQTL mapping and related analyses for the paper:
 
 > *Common genetic determinants of dynamic human* ***in vivo*** *immune response to Mycobacterium tuberculosis*  
-> <sub>Ping Zhang, Carolin T Turner, Aneesh Chandran, Joshua Rosenheim, Jana Jiang, Lucy K Bell, Santino Capocci, Marc Lipman, Heinke Kunst, Stefan Lozewicz, Gillian S Tomlinson, Julian C Knight, and Mahdad Noursadeghi</sub>
+> <sub>Ping Zhang, Carolin T Turner, Aneesh Chandran, Tom Parks, Joshua Rosenheim, Jana Jiang, Lucy K Bell, Santino Capocci, Marc Lipman, Heinke Kunst, Stefan Lozewicz, Gillian S Tomlinson, Julian C Knight and Mahdad Noursadeghi</sub>
 
 See also [carolinturner/tst_eqtl](https://github.com/carolinturner/tst_eqtl) for code used to generate figure panels and source data.
 
